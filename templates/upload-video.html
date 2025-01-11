@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <title>Add a Quote</title>
+    <link rel="stylesheet" type="text/css" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="utf-8">
+</head>
+
+<body>
+    <div class="container">
+        <div class="mt-5">
+            <div class="float-left">
+                <h2>Submit a Video</h2>
+            </div>
+            <div class="float-right">
+                <a href="/" class="btn btn-primary">Go Back</a>
+            </div>
+            <div class="clearfix"></div>
+            <form enctype="multipart/form-data" method="POST" action="/upload-video" class="mt-5">
+                <fieldset>
+                    <div class="row form-group">
+                        <label class="col-md-4 col-12">Upload a video if it has one</label>
+                        <div class="col-md-8 col-12">
+                            <input type="file" name="myFile" />
+                            <div class="small mt-1"></div>
+                        </div>
+                    </div>    
+                </fieldset>
+                <fieldset>
+                    <div class="row form-group">
+                        <label class="col-md-4 col-12" for="passwordField">What is the password?</label>
+                        <div class="col-md-8 col-12">
+                            <input type="password" id="passwordField" name="password" class="form-control"/><br>
+                            <div class="small mt-1">If you don't know this, then you don't belong here.</div>
+                        </div>   
+                    </div>    
+                </fieldset>
+                {{ .csrfField }}
+                <button type="submit" class="btn btn-success float-right">Upload</button>
+            </form>
+            <div class="clearfix"></div>
+        </div>
+        <label>{{ .errorMessage }}</label>
+        <footer class="text-right text-muted mb-5 mt-5">
+            <em>this page brought to you by your nightmares i.e. pete</em>
+        </footer>
+    </div>
+</body>
