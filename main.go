@@ -4,11 +4,11 @@ import (
 	"crypto/rand"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
 	"io"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,19 +20,22 @@ import (
 
 	"github.com/cj123/formulate"
 	"github.com/cj123/formulate/decorators"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/csrf"
 	"mvdan.cc/xurls"
 )
 
 var (
-	quotesFolder string
-	password     string
+	quotesFolder      string
+	password          string
+	videosFolder      string
+	uploadedVideoName string = "uploadedVideoName"
 )
 
 func init() {
 	flag.StringVar(&quotesFolder, "f", "quotes", "where to store the quotes")
 	flag.StringVar(&password, "p", "password", "password")
+	flag.StringVar(&videosFolder, "v", "videos", "where to store the videos")
 	flag.Parse()
 }
 
@@ -40,8 +43,13 @@ func main() {
 	if err := os.MkdirAll(quotesFolder, 0755); err != nil {
 		panic(err)
 	}
+	if err := os.MkdirAll(videosFolder, 0755); err != nil {
+		panic(err)
+	}
 
 	indexTmpl := template.Must(template.New("index").Parse(indexTemplate))
+	uploadTmpl := template.Must(template.New("upload-video").Parse(uploadVideoTemplate))
+	incorrectTmpl := template.Must(template.New("incorrect").Parse(incorrectTemplate))
 
 	r := chi.NewRouter()
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
@@ -61,29 +69,57 @@ func main() {
 		var quoteForm AddQuoteForm
 
 		encodedForm, save, err := formulate.Formulate(r, &quoteForm, buildEncoder, buildDecoder)
+		sess, currentVideoInSession := GetUploadedVideoFileInSession(w, r)
 
 		if err == nil && save {
 			quoteForm.Quote.Time = time.Now()
+			quoteForm.Quote.WhatSillyVideoFeaturesTheSillyThing = currentVideoInSession
 
 			if err := quoteForm.Quote.Save(); err != nil {
 				http.Error(w, "couldn't save quote", http.StatusInternalServerError)
 				return
 			}
 
+			sess.SetAttr(uploadedVideoName, "")
 			http.Redirect(w, r, "/", http.StatusFound)
 		} else if err != nil {
 			http.Error(w, "bad form", http.StatusInternalServerError)
 			return
 		}
-
+		finalTemplate := strings.Replace(addQuoteTemplate, ":video:", currentVideoInSession, -1)
 		w.Header().Add("Content-Type", "text/html")
-		_, _ = w.Write([]byte(fmt.Sprintf(addQuoteTemplate, encodedForm)))
+		_, _ = w.Write([]byte(fmt.Sprintf(finalTemplate, encodedForm)))
+	})
+
+	r.HandleFunc("/upload-video", func(w http.ResponseWriter, r *http.Request) {
+		var errorMessage string
+		if r.Method == http.MethodPost {
+			err := UploadVideo(w, r)
+			if err != nil {
+				errorMessage = err.Error()
+			}
+		}
+
+		_ = uploadTmpl.Execute(w, map[string]interface{}{
+			"errorMessage":   errorMessage,
+			csrf.TemplateTag: csrf.TemplateField(r),
+		})
+	})
+
+	r.Get("/incorrect", func(w http.ResponseWriter, r *http.Request) {
+		_ = incorrectTmpl.Execute(w, map[string]interface{}{
+			csrf.TemplateTag: csrf.TemplateField(r),
+		})
 	})
 
 	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "text/plain")
 		_, _ = w.Write([]byte("User-agent: *\nDisallow: /"))
 	})
+
+	workDir, _ := os.Getwd()
+	videoDir := http.Dir(filepath.Join(workDir, videosFolder))
+	FileServer(r, "/embed", videoDir)
 
 	b := make([]byte, 32)
 
@@ -93,7 +129,7 @@ func main() {
 		panic(err)
 	}
 
-	log.Fatal(http.ListenAndServe(":8990", csrf.Protect(b)(r)))
+	log.Fatal(http.ListenAndServeTLS(":10443", "certificate.crt", "private.key", csrf.Protect(b)(r)))
 }
 
 func buildEncoder(r *http.Request, w io.Writer) *formulate.HTMLEncoder {
@@ -106,14 +142,14 @@ func buildEncoder(r *http.Request, w io.Writer) *formulate.HTMLEncoder {
 
 func buildDecoder(r *http.Request, form url.Values) *formulate.HTTPDecoder {
 	dec := formulate.NewDecoder(form)
-	dec.SetValueOnValidationError(true)
+	dec.SetValueOnValidationError(false)
 	dec.AddValidators(passwordValidator{})
 
 	return dec
 }
 
 func listQuotes() ([]*Quote, error) {
-	files, err := ioutil.ReadDir(quotesFolder)
+	files, err := os.ReadDir(quotesFolder)
 
 	if err != nil {
 		return nil, err
@@ -157,9 +193,22 @@ func readQuote(file string) (*Quote, error) {
 }
 
 type Quote struct {
-	Time                     time.Time `show:"-"`
-	WhoSaidTheSillyThing     string    `name:"Who said the silly thing?"`
-	WhatSillyThingDidTheySay string    `name:"What silly thing did they say?" elem:"textarea"`
+	Time                                time.Time `show:"-"`
+	WhoSaidTheSillyThing                string    `name:"Who said the silly thing?"`
+	WhatSillyThingDidTheySay            string    `name:"What silly thing did they say?" elem:"textarea"`
+	WhatSillyVideoFeaturesTheSillyThing string    `show:"-"`
+}
+
+func (q *Quote) EmbedVideo() template.HTML {
+	var videoName = q.WhatSillyVideoFeaturesTheSillyThing
+	if videoName != "" {
+		if _, err := os.Stat(filepath.Join(videosFolder, videoName)); errors.Is(err, os.ErrNotExist) {
+			return template.HTML("<br><p>There was a video here, but its gone :(</p>")
+		}
+		var contentType = LastElement(videoName, ".")
+		return template.HTML(fmt.Sprintf("<br><video width='80%%' height='80%%' style='border: 1px solid #fff; margin-top: 20px; margin-bottom: 20px' controls preload='metadata'><source src='../embed/%s' type='video/%s'>", videoName, contentType))
+	}
+	return template.HTML("<br>")
 }
 
 func (q *Quote) IsImageURL() bool {
@@ -173,7 +222,6 @@ func (q *Quote) HTML() template.HTML {
 	if q.IsImageURL() {
 		return template.HTML(fmt.Sprintf(`<img src="%s" class="img img-fluid" style="max-height: 400px;">`, q.WhatSillyThingDidTheySay))
 	}
-
 	q.WhatSillyThingDidTheySay = xurls.Relaxed.ReplaceAllString(q.WhatSillyThingDidTheySay, `<a href="$1">$1</a>`)
 
 	return template.HTML(strings.Replace(q.WhatSillyThingDidTheySay, "\r\n", "<br>", -1))
@@ -205,6 +253,12 @@ var (
 
 	//go:embed templates/add-quote.html
 	addQuoteTemplate string
+
+	//go:embed templates/upload-video.html
+	uploadVideoTemplate string
+
+	//go:embed templates/incorrect.html
+	incorrectTemplate string
 )
 
 type passwordValidator struct{}
