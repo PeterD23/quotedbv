@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -10,10 +12,12 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +52,7 @@ func main() {
 	}
 
 	indexTmpl := template.Must(template.New("index").Parse(indexTemplate))
+	quoteTmpl := template.Must(template.New("quote").Parse(quoteTemplate))
 	uploadTmpl := template.Must(template.New("upload-video").Parse(uploadVideoTemplate))
 	incorrectTmpl := template.Must(template.New("incorrect").Parse(incorrectTemplate))
 
@@ -91,6 +96,35 @@ func main() {
 		_, _ = w.Write([]byte(fmt.Sprintf(finalTemplate, encodedForm)))
 	})
 
+	r.HandleFunc("/quote", func(w http.ResponseWriter, r *http.Request) {
+		quotes, err := listQuotes()
+		var quote *Quote
+		var keys = slices.Collect(maps.Keys(r.URL.Query()))
+		for _, element := range quotes {
+			var hash = element.GetHash()
+			if keys[0] == hash {
+				quote = element
+				break
+			}
+		}
+
+		if quote == nil {
+			quote = new(Quote)
+			quote.WhatSillyThingDidTheySay = "I'm sorry, this isn't a valid quote"
+			quote.Time = time.Now()
+			quote.WhoSaidTheSillyThing = "quotedbv"
+		}
+
+		if err != nil {
+			http.Error(w, "couldn't list quote", http.StatusInternalServerError)
+			return
+		}
+
+		_ = quoteTmpl.Execute(w, map[string]interface{}{
+			"Quote": quote,
+		})
+	})
+
 	r.HandleFunc("/upload-video", func(w http.ResponseWriter, r *http.Request) {
 		var errorMessage string
 		if r.Method == http.MethodPost {
@@ -117,9 +151,7 @@ func main() {
 		_, _ = w.Write([]byte("User-agent: *\nDisallow: /"))
 	})
 
-	workDir, _ := os.Getwd()
-	videoDir := http.Dir(filepath.Join(workDir, videosFolder))
-	FileServer(r, "/embed", videoDir)
+	FileServer(r, "/embed", http.Dir(videosFolder))
 
 	b := make([]byte, 32)
 
@@ -218,13 +250,20 @@ func (q *Quote) IsImageURL() bool {
 		(strings.HasSuffix(q.WhatSillyThingDidTheySay, ".png") || strings.HasSuffix(q.WhatSillyThingDidTheySay, ".jpg") || strings.HasSuffix(q.WhatSillyThingDidTheySay, ".jpeg") || strings.HasSuffix(q.WhatSillyThingDidTheySay, ".gif"))
 }
 
-func (q *Quote) HTML() template.HTML {
+func (q *Quote) HTML(list bool) template.HTML {
 	if q.IsImageURL() {
 		return template.HTML(fmt.Sprintf(`<img src="%s" class="img img-fluid" style="max-height: 400px;">`, q.WhatSillyThingDidTheySay))
 	}
 	q.WhatSillyThingDidTheySay = xurls.Relaxed.ReplaceAllString(q.WhatSillyThingDidTheySay, `<a href="$1">$1</a>`)
 
-	return template.HTML(strings.Replace(q.WhatSillyThingDidTheySay, "\r\n", "<br>", -1))
+	var link = q.GetHash()
+	var multiline = strings.Replace(q.WhatSillyThingDidTheySay, "\r\n", "<br>", -1)
+
+	if list {
+		return template.HTML(fmt.Sprintf("<a href='/quote?%s'>%s</a>", link, multiline))
+	} else {
+		return template.HTML(multiline)
+	}
 }
 
 func (q *Quote) Save() error {
@@ -242,6 +281,11 @@ func (q *Quote) Save() error {
 	return enc.Encode(q)
 }
 
+func (q *Quote) GetHash() string {
+	var hash = sha256.Sum256([]byte(fmt.Sprintf("%v", q)))
+	return string(hex.EncodeToString(hash[:])[:16])
+}
+
 type AddQuoteForm struct {
 	Quote
 	WhatIsThePassword formulate.Password `name:"What is the password?" help:"If you don't know this, then you don't belong here." validators:"password"`
@@ -250,6 +294,9 @@ type AddQuoteForm struct {
 var (
 	//go:embed templates/index.html
 	indexTemplate string
+
+	//go:embed templates/quote.html
+	quoteTemplate string
 
 	//go:embed templates/add-quote.html
 	addQuoteTemplate string
