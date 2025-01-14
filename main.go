@@ -34,12 +34,16 @@ var (
 	password          string
 	videosFolder      string
 	uploadedVideoName string = "uploadedVideoName"
+	websiteDomain     string
+	websiteName       string
 )
 
 func init() {
 	flag.StringVar(&quotesFolder, "f", "quotes", "where to store the quotes")
 	flag.StringVar(&password, "p", "password", "password")
 	flag.StringVar(&videosFolder, "v", "videos", "where to store the videos")
+	flag.StringVar(&websiteDomain, "d", "https://example.com", "website domain starting with https")
+	flag.StringVar(&websiteName, "n", "Quotes", "name of the website")
 	flag.Parse()
 }
 
@@ -66,7 +70,8 @@ func main() {
 		}
 
 		_ = indexTmpl.Execute(w, map[string]interface{}{
-			"Quotes": quotes,
+			"WebsiteName": websiteName,
+			"Quotes":      quotes,
 		})
 	})
 
@@ -115,13 +120,17 @@ func main() {
 			quote.WhoSaidTheSillyThing = "quotedbv"
 		}
 
+		var metaTags = quote.GenerateEmbeddableMeta()
+
 		if err != nil {
 			http.Error(w, "couldn't list quote", http.StatusInternalServerError)
 			return
 		}
 
 		_ = quoteTmpl.Execute(w, map[string]interface{}{
-			"Quote": quote,
+			"WebsiteName": websiteName,
+			"MetaTags":    metaTags,
+			"Quote":       quote,
 		})
 	})
 
@@ -229,6 +238,31 @@ type Quote struct {
 	WhoSaidTheSillyThing                string    `name:"Who said the silly thing?"`
 	WhatSillyThingDidTheySay            string    `name:"What silly thing did they say?" elem:"textarea"`
 	WhatSillyVideoFeaturesTheSillyThing string    `show:"-"`
+}
+
+func (q *Quote) GenerateEmbeddableMeta() template.HTML {
+	var hash = q.GetHash()
+
+	var siteName = fmt.Sprintf("<meta property='og:site_name' content='%s'>", websiteName)
+	var websiteUrl = fmt.Sprintf("<meta property='og:url' content='%s/quote?%s'>", websiteDomain, hash)
+	var pageTitle = fmt.Sprintf("<meta property='og:title' content='%s'>", websiteName)
+	var pageDescription = fmt.Sprintf("<meta property='og:description' content='\"%s\" ~%s'>", q.WhatSillyThingDidTheySay, q.WhoSaidTheSillyThing)
+	var embedType = "<meta property='og:type' content='website'>"
+
+	var basicMeta = fmt.Sprintf("%s\n%s\n%s\n%s", siteName, websiteUrl, pageTitle, pageDescription)
+	var videoName = q.WhatSillyVideoFeaturesTheSillyThing
+	if videoName != "" {
+		if _, err := os.Stat(filepath.Join(videosFolder, videoName)); errors.Is(err, os.ErrNotExist) {
+			return template.HTML(fmt.Sprintf("%s\n%s", basicMeta, embedType))
+		}
+		embedType = "<meta property='og:type' content='video.other'>"
+		var videoString = fmt.Sprintf("<meta property='og:video' content='%s/embed/%s'>", websiteDomain, videoName)
+		var contentType = fmt.Sprintf("<meta property='og:video:type' content='video/%s'>", LastElement(videoName, "."))
+		var videoDimensions = "<meta property='og:video:width' content='1280'>\n<meta property='og:video:height' content='720'>"
+
+		return template.HTML(fmt.Sprintf("%s\n%s\n%s\n%s\n%s", basicMeta, embedType, videoString, contentType, videoDimensions))
+	}
+	return template.HTML(fmt.Sprintf("%s\n%s", basicMeta, embedType))
 }
 
 func (q *Quote) EmbedVideo() template.HTML {
