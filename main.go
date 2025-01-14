@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html"
 	"html/template"
 	"io"
 	"log"
@@ -243,9 +244,9 @@ type Quote struct {
 func (q *Quote) GenerateEmbeddableMeta() template.HTML {
 	var hash = q.GetHash()
 
-	var siteName = fmt.Sprintf("<meta property='og:site_name' content='%s'>", websiteName)
+	var siteName = fmt.Sprintf("<meta property='og:site_name' content='%s'>", html.EscapeString(websiteName))
 	var websiteUrl = fmt.Sprintf("<meta property='og:url' content='%s/quote?%s'>", websiteDomain, hash)
-	var pageTitle = fmt.Sprintf("<meta property='og:title' content='%s'>", websiteName)
+	var pageTitle = fmt.Sprintf("<meta property='og:title' content='%s'>", html.EscapeString(websiteName))
 	var pageDescription = fmt.Sprintf("<meta property='og:description' content='\"%s\" ~%s'>", q.WhatSillyThingDidTheySay, q.WhoSaidTheSillyThing)
 	var embedType = "<meta property='og:type' content='website'>"
 
