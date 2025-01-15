@@ -255,7 +255,7 @@ func (q *Quote) GenerateEmbeddableMeta() template.HTML {
 			return template.HTML(nonVideoMeta)
 		}
 		pageTitle = fmt.Sprintf("<meta property='og:site_name' content='%s'>", html.EscapeString(websiteName))
-		pageDescription = fmt.Sprintf("<meta property='og:description' content='\"%s\" ~%s'>", q.WhatSillyThingDidTheySay, q.WhoSaidTheSillyThing)
+		pageDescription = fmt.Sprintf("<meta property='og:title' content='\"%s\" ~%s'>", q.WhatSillyThingDidTheySay, q.WhoSaidTheSillyThing)
 		embedType = "<meta property='og:type' content='video.other'>"
 		var videoString = fmt.Sprintf("<meta property='og:video' content='%s/embed/%s'>", websiteDomain, videoName)
 		var contentType = fmt.Sprintf("<meta property='og:video:type' content='video/%s'>", LastElement(videoName, "."))
