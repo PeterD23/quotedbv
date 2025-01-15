@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/icza/session"
+	ffmpeg_go "github.com/u2takey/ffmpeg-go"
 	"gopkg.in/vansante/go-ffprobe.v2"
 )
 
@@ -64,7 +65,24 @@ func UploadVideo(w http.ResponseWriter, r *http.Request) error {
 
 	// Write the new video file to disk, set the session video file
 	tempFile.Write(fileBytes)
+	tempFile.Close()
+
+	// If its an mp4, perform a faststart operation with ffmpeg
+	if contentType == "video/mp4" {
+		var input = filepath.Join(videosFolder, uploadedFileName)
+		var convertedFileName = fmt.Sprintf("stream_%s", uploadedFileName)
+		var output = filepath.Join(videosFolder, convertedFileName)
+		err := ffmpeg_go.Input(input).
+			Output(output, ffmpeg_go.KwArgs{"c": "copy", "movflags": "+faststart"}).
+			OverWriteOutput().ErrorToStdOut().Run()
+		if err != nil {
+			return fmt.Errorf("video was uploaded but ffmpeg failed due to '%s'", err.Error())
+		}
+		os.Remove(filepath.Join(videosFolder, uploadedFileName))
+		uploadedFileName = convertedFileName
+	}
 	session.SetAttr(uploadedVideoName, uploadedFileName)
+
 	http.Redirect(w, r, "/add-quote", http.StatusFound)
 	return nil
 }
@@ -93,13 +111,13 @@ func LastElement(str string, sep string) string {
 	return split[len(split)-1]
 }
 
-func ValidCodec(file multipart.File) (valid bool, codec string) {
+func ValidCodec(file multipart.File) (bool, string) {
 	ctx, cancelFn := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelFn()
 
 	data, err := ffprobe.ProbeReader(ctx, file)
 	if err != nil {
-		return false, ""
+		return false, "unknown"
 	}
 
 	var codecName = data.FirstVideoStream().CodecName
